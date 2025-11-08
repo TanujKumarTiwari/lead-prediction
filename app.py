@@ -10,19 +10,20 @@ import plotly.graph_objects as go
 # Streamlit Configuration
 # ------------------------- #
 st.set_page_config(page_title="Lead Conversion Predictor", page_icon="🤖", layout="centered")
-st.title("🤖 Lead Conversion Prediction App")
+st.title("🤖 Custom Prediction App")
 
 # Add helper text explaining the two-step process
 st.markdown("""
-This app predicts lead conversion using a two-step process:
+This app lets you train a prediction model on any numeric column in your data:
 
 1️⃣ **Train the Model** (Main Area):
-   - Upload your CSV file or use the default `Leads.csv`
+   - Upload your CSV file
+   - Select the target column you want to predict
    - Click "Train Model" to build the predictor
-   - CSV must include a `Converted` column (0/1 values)
+   - For best results, use a binary (0/1) target column
 
 2️⃣ **Make Predictions** (Sidebar):
-   - Fill in lead details using the form
+   - Fill in features using the form
    - Add custom values if needed
    - Click "Submit & Predict" to see results
 """)
@@ -30,7 +31,7 @@ This app predicts lead conversion using a two-step process:
 # ------------------------- #
 # Preprocessing + Model Training
 # ------------------------- #
-def preprocess_and_train(df):
+def preprocess_and_train(df, target_col):
     df = df.copy()
 
     # Drop columns with unique values (like IDs)
@@ -59,12 +60,12 @@ def preprocess_and_train(df):
     df.fillna(df.mean(), inplace=True)
 
     # Check for target column
-    if "Converted" not in df.columns:
-        raise ValueError("Target column 'Converted' not found in the dataset!")
+    if target_col not in df.columns:
+        raise ValueError(f"Target column '{target_col}' not found in the dataset!")
 
     # Split features/target
-    X = df.drop("Converted", axis=1)
-    y = df["Converted"]
+    X = df.drop(target_col, axis=1)
+    y = df[target_col]
 
     # Split data
     x_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=1)
@@ -86,107 +87,98 @@ if 'trained_model' not in st.session_state:
     st.session_state.trained_accuracy = None
     st.session_state.trained_encoders = None
     st.session_state.trained_df = None
+    st.session_state.target_column = None
+    st.session_state.preview_df = None
 
 # Form for data upload and training
 with st.form("training_form"):
-    uploaded_file = st.file_uploader("📤 Upload a CSV file (must contain a 'Converted' column)", type=["csv"])
+    uploaded_file = st.file_uploader("📤 Upload your CSV file", type=["csv"])
+    
+    # Show column selector if a file is uploaded
+    target_col = None
+    if uploaded_file is not None:
+        try:
+            # Preview the DataFrame
+            preview_df = pd.read_csv(uploaded_file)
+            st.session_state.preview_df = preview_df
+            
+            # Show sample of the data
+            st.write("Preview of uploaded data:")
+            st.dataframe(preview_df.head())
+            
+            # Column selector for prediction target
+            numeric_cols = preview_df.select_dtypes(include=['int64', 'float64']).columns.tolist()
+            target_col = st.selectbox(
+                "Select the column to predict (should be numeric, 0/1 for best results):",
+                options=numeric_cols,
+                help="Choose the column you want to predict. For classification, use a column with 0/1 values."
+            )
+            
+        except Exception as e:
+            st.error(f"Error previewing file: {e}")
+    
     train_submitted = st.form_submit_button("📚 Train Model")
 
 if train_submitted:
-    if uploaded_file is not None:
+    if uploaded_file is not None and target_col:
         try:
-            # Make sure the file pointer is at the start (UploadedFile may have been read)
-            try:
-                uploaded_file.seek(0)
-            except Exception:
-                pass
-
             # Read uploaded CSV and handle empty-data specifically
             try:
-                df = pd.read_csv(uploaded_file)
-            except pd.errors.EmptyDataError:
-                st.warning("⚠️ Uploaded CSV contains no data or no columns. Falling back to a small demo dataset for the UI.")
-                df = pd.DataFrame({
-                    "Age": [25, 40, 30],
-                    "Income": [50000, 80000, 60000],
-                    "State": ["CA", "TX", "NY"],
-                    "Converted": [1, 0, 1]
-                })
+                df = st.session_state.preview_df.copy()
+            except:
+                st.error("❌ Please select a target column before training.")
+                st.stop()
 
             if df.empty:
-                st.warning("⚠️ Uploaded CSV is empty. Falling back to a small demo dataset for the UI.")
-                df = pd.DataFrame({
-                    "Age": [25, 40, 30],
-                    "Income": [50000, 80000, 60000],
-                    "State": ["CA", "TX", "NY"],
-                    "Converted": [1, 0, 1]
-                })
+                st.warning("⚠️ Uploaded CSV is empty. Please check your data.")
+                st.stop()
 
-            model, X, accuracy, encoders = preprocess_and_train(df)
+            # Store target column in session state
+            st.session_state.target_column = target_col
+
+            # Train model with selected target column
+            model, X, accuracy, encoders = preprocess_and_train(df, target_col)
+
             # Store in session state
             st.session_state.trained_model = model
             st.session_state.trained_X = X
             st.session_state.trained_accuracy = accuracy
             st.session_state.trained_encoders = encoders
             st.session_state.trained_df = df.copy()
-            st.success(f"✅ Model retrained successfully with uploaded data. Accuracy: **{accuracy*100:.2f}%**")
+            st.success(f"✅ Model trained successfully to predict '{target_col}'. Accuracy: **{accuracy*100:.2f}%**")
         except Exception as e:
             st.error(f"❌ Error while processing file: {e}")
             st.stop()
     else:
+        # Check if file and target column are provided
+        if not uploaded_file:
+            st.error("❌ Please upload a CSV file.")
+            st.stop()
+        if not target_col:
+            st.error("❌ Please select a target column to predict.")
+            st.stop()
+
+        # Default dataset for demo (only used if something went wrong)
+        df = pd.DataFrame({
+            "Age": [25, 40, 30],
+            "Income": [50000, 80000, 60000],
+            "State": ["CA", "TX", "NY"],
+            "Target": [1, 0, 1]
+        })
+        st.warning("⚠️ Using a demo dataset due to processing issues.")
         try:
-            try:
-                df = pd.read_csv("Leads.csv")
-            except pd.errors.EmptyDataError:
-                st.warning("⚠️ Default Leads.csv is empty or invalid. Falling back to a small demo dataset for the UI.")
-                df = pd.DataFrame({
-                    "Age": [25, 40, 30],
-                    "Income": [50000, 80000, 60000],
-                    "State": ["CA", "TX", "NY"],
-                    "Converted": [1, 0, 1]
-                })
-
-            if df.empty:
-                st.warning("⚠️ Default Leads.csv is empty. Falling back to a small demo dataset for the UI.")
-                df = pd.DataFrame({
-                    "Age": [25, 40, 30],
-                    "Income": [50000, 80000, 60000],
-                    "State": ["CA", "TX", "NY"],
-                    "Converted": [1, 0, 1]
-                })
-
-            model, X, accuracy, encoders = preprocess_and_train(df)
+            model, X, accuracy, encoders = preprocess_and_train(df, "Target")
             # Store in session state
             st.session_state.trained_model = model
             st.session_state.trained_X = X
             st.session_state.trained_accuracy = accuracy
             st.session_state.trained_encoders = encoders
             st.session_state.trained_df = df.copy()
-            st.info("📘 Using default Leads.csv dataset")
-            st.success(f"✅ Default model trained. Accuracy: **{accuracy*100:.2f}%**")
-        except FileNotFoundError:
-            st.warning("⚠️ No file uploaded and default Leads.csv not found. Using a small demo dataset so the UI remains interactive.")
-            df = pd.DataFrame({
-                "Age": [25, 40, 30],
-                "Income": [50000, 80000, 60000],
-                "State": ["CA", "TX", "NY"],
-                "Converted": [1, 0, 1]
-            })
-            try:
-                model, X, accuracy, encoders = preprocess_and_train(df)
-                # Store in session state
-                st.session_state.trained_model = model
-                st.session_state.trained_X = X
-                st.session_state.trained_accuracy = accuracy
-                st.session_state.trained_encoders = encoders
-                st.session_state.trained_df = df.copy()
-                st.info("📘 Using built-in demo dataset")
-                st.success(f"✅ Demo model trained. Accuracy: **{accuracy*100:.2f}%**")
-            except Exception as e:
-                st.error(f"❌ Error while training on demo dataset: {e}")
-                st.stop()
+            st.session_state.target_column = "Target"
+            st.info("📘 Using built-in demo dataset")
+            st.success(f"✅ Demo model trained. Accuracy: **{accuracy*100:.2f}%**")
         except Exception as e:
-            st.error(f"❌ Error while loading default dataset: {e}")
+            st.error(f"❌ Error while training on demo dataset: {e}")
             st.stop()
 
 # Ensure prediction variables exist in all code paths
@@ -213,13 +205,14 @@ if st.session_state.trained_model is not None:
     original_df = st.session_state.trained_df
 
     # Separate numeric and categorical columns (excluding target)
+    target_col = st.session_state.target_column
     numeric_cols = original_df.select_dtypes(include=np.number).columns.tolist()
     categorical_cols = original_df.select_dtypes(exclude=np.number).columns.tolist()
 
-    if "Converted" in numeric_cols:
-        numeric_cols.remove("Converted")
-    if "Converted" in categorical_cols:
-        categorical_cols.remove("Converted")
+    if target_col in numeric_cols:
+        numeric_cols.remove(target_col)
+    if target_col in categorical_cols:
+        categorical_cols.remove(target_col)
 
     with st.sidebar.form("input_form"):
         user_input = {}
@@ -308,26 +301,54 @@ with st.container():
     st.subheader("📈 Prediction Results")
     if predict_submitted:
         try:
+            target_col = st.session_state.target_column
             prediction = st.session_state.trained_model.predict(encoded_input)[0]
-            probability = st.session_state.trained_model.predict_proba(encoded_input)[0][1]
+            probabilities = st.session_state.trained_model.predict_proba(encoded_input)[0]
             
             # Show results in columns for better layout
             col1, col2 = st.columns(2)
             with col1:
-                st.markdown(f"**Prediction:** {'✅ Yes' if prediction == 1 else '❌ No'}")
-            with col2:
-                st.markdown(f"**Probability:** `{probability*100:.2f}%`")
+                st.markdown(f"**Predicted {target_col}:** `{prediction}`")
+            
+            # Only show probability for binary classification
+            if len(probabilities) == 2:
+                probability = probabilities[1]
+                with col2:
+                    st.markdown(f"**Probability:** `{probability*100:.2f}%`")
 
-            # Gauge chart for visual effect
-            fig = go.Figure(go.Indicator(
-                mode="gauge+number",
-                value=probability * 100,
-                title={'text': "Conversion Probability (%)"},
-                gauge={'axis': {'range': [0, 100]},
-                       'bar': {'color': "green" if probability > 0.5 else "red"},
-                       'steps': [{'range': [0, 50], 'color': "#ffcccc"},
-                                {'range': [50, 100], 'color': "#ccffcc"}]}))
-            st.plotly_chart(fig, use_container_width=True)
+                # Gauge chart for binary classification
+                fig = go.Figure(go.Indicator(
+                    mode="gauge+number",
+                    value=probability * 100,
+                    title={'text': f"{target_col} Probability (%)"},
+                    gauge={'axis': {'range': [0, 100]},
+                           'bar': {'color': "green" if probability > 0.5 else "red"},
+                           'steps': [{'range': [0, 50], 'color': "#ffcccc"},
+                                    {'range': [50, 100], 'color': "#ccffcc"}]}))
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                # For non-binary classification, show all class probabilities
+                with col2:
+                    st.markdown(f"**Number of classes:** `{len(probabilities)}`")
+                
+                # Bar chart for multi-class probabilities
+                prob_df = pd.DataFrame({
+                    'Class': range(len(probabilities)),
+                    'Probability': probabilities
+                })
+                fig = go.Figure(data=[
+                    go.Bar(name='Probability', 
+                          x=prob_df['Class'],
+                          y=prob_df['Probability']*100)
+                ])
+                fig.update_layout(
+                    title=f"{target_col} Class Probabilities",
+                    xaxis_title="Class",
+                    yaxis_title="Probability (%)",
+                    yaxis_range=[0,100]
+                )
+                st.plotly_chart(fig, use_container_width=True)
+                
         except Exception as e:
             st.error(f"❌ Prediction error: {e}")
     else:
